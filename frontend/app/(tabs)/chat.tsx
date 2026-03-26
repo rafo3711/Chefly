@@ -18,7 +18,6 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Speech from 'expo-speech';
 import { Audio } from 'expo-av';
-import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Colors from '../../src/theme/colors';
 import * as api from '../../src/services/api';
@@ -35,18 +34,29 @@ interface Message {
   isVoice?: boolean;
 }
 
-// Sommelier system prompt - elite concierge style
-const SOMMELIER_PROMPT = `Ти — елітний сомельє-консьєрж з 20-річним стажем у найкращих ресторанах світу. 
-Твоя відповідь має бути лаконічною (2-4 речення), теплою та професійною. 
-Відповідай тією ж мовою, якою до тебе звернулися.
-Якщо питають про їжу — рекомендуй напій. Якщо про напій — рекомендуй страву.
-Говори від першої особи, з елегантністю та пристрастю до своєї справи.`;
-
-// TTS Configuration for natural voice
+// ============================================
+// 🔊 NATURAL TTS CONFIGURATION
+// ============================================
 const TTS_CONFIG = {
-  rate: 1.0,      // Natural speaking rate
-  pitch: 1.1,    // Slightly higher for friendly tone
+  // Voice settings for natural, friendly tone (like Alisa)
+  pitch: 1.1,           // Slightly higher - more emotional
+  rate: 1.08,           // Slightly faster - more natural
+  pauseBeforeMs: 350,   // "Taking breath" pause before speaking
+  
+  // Language-specific rates (some languages need adjustment)
+  languageRates: {
+    'uk-UA': 1.05,      // Ukrainian sounds better slightly slower
+    'ru-RU': 1.08,      // Russian natural pace
+    'en-US': 1.1,       // English slightly faster
+    'en-GB': 1.05,      // British English more measured
+  } as Record<string, number>,
 };
+
+// Sommelier prompt for concise, warm responses
+const SOMMELIER_PROMPT = `Ти — елітний сомельє-консьєрж. 
+Твоя відповідь має бути КОРОТКОЮ (2-3 речення), теплою та професійною.
+Відповідай тією ж мовою, якою до тебе звернулися.
+Говори природно, ніби в живій розмові.`;
 
 // ============================================
 // 🎤 Web Speech Recognition Hook
@@ -55,8 +65,8 @@ const useWebSpeechRecognition = () => {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [interimTranscript, setInterimTranscript] = useState('');
-  const [isSupported, setIsSupported] = useState(false);
   const [isFinal, setIsFinal] = useState(false);
+  const [isSupported, setIsSupported] = useState(false);
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
@@ -92,12 +102,8 @@ const useWebSpeechRecognition = () => {
           }
         };
 
-        recognition.onend = () => {
-          setIsListening(false);
-        };
-
-        recognition.onerror = (event: any) => {
-          console.error('Speech recognition error:', event.error);
+        recognition.onend = () => setIsListening(false);
+        recognition.onerror = () => {
           setIsListening(false);
           setIsFinal(false);
         };
@@ -114,9 +120,7 @@ const useWebSpeechRecognition = () => {
       setIsFinal(false);
       
       const langMap: Record<string, string> = {
-        'UK': 'uk-UA',
-        'EN': 'en-US', 
-        'RU': 'ru-RU',
+        'UK': 'uk-UA', 'EN': 'en-US', 'RU': 'ru-RU',
       };
       recognitionRef.current.lang = langMap[language] || language;
       
@@ -152,7 +156,7 @@ const useWebSpeechRecognition = () => {
 };
 
 // ============================================
-// 🎵 Animated Voice Button Component
+// 🎵 Animated Voice Button
 // ============================================
 const VoiceButton = ({ 
   isRecording, 
@@ -169,141 +173,65 @@ const VoiceButton = ({
 }) => {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const pulse2Anim = useRef(new Animated.Value(1)).current;
-  const pulse3Anim = useRef(new Animated.Value(1)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
   const rotateAnim = useRef(new Animated.Value(0)).current;
   const scaleAnim = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
     if (isRecording) {
-      // Triple pulse wave animation
-      const createPulse = (anim: Animated.Value, delay: number) => {
-        return Animated.loop(
-          Animated.sequence([
-            Animated.delay(delay),
-            Animated.parallel([
-              Animated.timing(anim, {
-                toValue: 1.8,
-                duration: 1200,
-                easing: Easing.out(Easing.ease),
-                useNativeDriver: true,
-              }),
-            ]),
-            Animated.timing(anim, {
-              toValue: 1,
-              duration: 0,
-              useNativeDriver: true,
-            }),
-          ])
-        );
-      };
-
       Animated.parallel([
-        createPulse(pulseAnim, 0),
-        createPulse(pulse2Anim, 400),
-        createPulse(pulse3Anim, 800),
         Animated.loop(
           Animated.sequence([
-            Animated.timing(opacityAnim, { toValue: 0.8, duration: 600, useNativeDriver: true }),
-            Animated.timing(opacityAnim, { toValue: 0.3, duration: 600, useNativeDriver: true }),
+            Animated.parallel([
+              Animated.timing(pulseAnim, { toValue: 1.6, duration: 1000, easing: Easing.out(Easing.ease), useNativeDriver: true }),
+              Animated.timing(opacityAnim, { toValue: 0.7, duration: 500, useNativeDriver: true }),
+            ]),
+            Animated.timing(pulseAnim, { toValue: 1, duration: 0, useNativeDriver: true }),
+            Animated.timing(opacityAnim, { toValue: 0, duration: 500, useNativeDriver: true }),
           ])
         ),
         Animated.loop(
           Animated.sequence([
-            Animated.timing(scaleAnim, { toValue: 1.05, duration: 300, useNativeDriver: true }),
-            Animated.timing(scaleAnim, { toValue: 0.95, duration: 300, useNativeDriver: true }),
+            Animated.delay(300),
+            Animated.timing(pulse2Anim, { toValue: 1.4, duration: 1000, useNativeDriver: true }),
+            Animated.timing(pulse2Anim, { toValue: 1, duration: 0, useNativeDriver: true }),
+          ])
+        ),
+        Animated.loop(
+          Animated.sequence([
+            Animated.timing(scaleAnim, { toValue: 1.05, duration: 250, useNativeDriver: true }),
+            Animated.timing(scaleAnim, { toValue: 0.95, duration: 250, useNativeDriver: true }),
           ])
         ),
       ]).start();
     } else if (isProcessing) {
-      // Processing rotation
       Animated.loop(
-        Animated.timing(rotateAnim, {
-          toValue: 1,
-          duration: 1500,
-          easing: Easing.linear,
-          useNativeDriver: true,
-        })
+        Animated.timing(rotateAnim, { toValue: 1, duration: 1200, easing: Easing.linear, useNativeDriver: true })
       ).start();
     } else if (isSpeaking) {
-      // Speaking pulse
       Animated.loop(
         Animated.sequence([
-          Animated.timing(scaleAnim, { toValue: 1.1, duration: 200, useNativeDriver: true }),
-          Animated.timing(scaleAnim, { toValue: 1, duration: 200, useNativeDriver: true }),
+          Animated.timing(scaleAnim, { toValue: 1.08, duration: 180, useNativeDriver: true }),
+          Animated.timing(scaleAnim, { toValue: 1, duration: 180, useNativeDriver: true }),
         ])
       ).start();
     } else {
-      // Reset all
-      pulseAnim.setValue(1);
-      pulse2Anim.setValue(1);
-      pulse3Anim.setValue(1);
-      opacityAnim.setValue(0);
-      rotateAnim.setValue(0);
+      [pulseAnim, pulse2Anim, opacityAnim, rotateAnim].forEach(a => a.setValue(a === opacityAnim ? 0 : 1));
       scaleAnim.setValue(1);
     }
   }, [isRecording, isProcessing, isSpeaking]);
 
-  const rotation = rotateAnim.interpolate({
-    inputRange: [0, 1],
-    outputRange: ['0deg', '360deg'],
-  });
-
-  const getIcon = () => {
-    if (isProcessing) return 'sparkles';
-    if (isSpeaking) return 'volume-high';
-    if (isRecording) return 'mic';
-    return 'mic-outline';
-  };
-
-  const getColor = () => {
-    if (isRecording) return Colors.black;
-    if (isSpeaking) return Colors.gold;
-    return Colors.gold;
-  };
+  const rotation = rotateAnim.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
 
   return (
     <View style={styles.voiceButtonWrapper}>
-      {/* Pulse rings for recording */}
       {isRecording && (
         <>
-          <Animated.View
-            style={[
-              styles.pulseRing,
-              {
-                transform: [{ scale: pulseAnim }],
-                opacity: opacityAnim,
-              },
-            ]}
-          />
-          <Animated.View
-            style={[
-              styles.pulseRing,
-              styles.pulseRing2,
-              {
-                transform: [{ scale: pulse2Anim }],
-                opacity: Animated.multiply(opacityAnim, 0.7),
-              },
-            ]}
-          />
-          <Animated.View
-            style={[
-              styles.pulseRing,
-              styles.pulseRing3,
-              {
-                transform: [{ scale: pulse3Anim }],
-                opacity: Animated.multiply(opacityAnim, 0.4),
-              },
-            ]}
-          />
+          <Animated.View style={[styles.pulseRing, { transform: [{ scale: pulseAnim }], opacity: opacityAnim }]} />
+          <Animated.View style={[styles.pulseRing, styles.pulseRing2, { transform: [{ scale: pulse2Anim }], opacity: Animated.multiply(opacityAnim, 0.5) }]} />
         </>
       )}
-      
-      <Animated.View
-        style={[
-          { transform: [{ scale: scaleAnim }] },
-        ]}
-      >
+      <Animated.View style={{ transform: [{ scale: scaleAnim }] }}>
         <TouchableOpacity
           style={[
             styles.voiceButton,
@@ -320,7 +248,11 @@ const VoiceButton = ({
               <Ionicons name="sparkles" size={26} color={Colors.gold} />
             </Animated.View>
           ) : (
-            <Ionicons name={getIcon()} size={26} color={getColor()} />
+            <Ionicons
+              name={isSpeaking ? 'volume-high' : isRecording ? 'mic' : 'mic-outline'}
+              size={26}
+              color={isRecording ? Colors.black : Colors.gold}
+            />
           )}
         </TouchableOpacity>
       </Animated.View>
@@ -329,10 +261,9 @@ const VoiceButton = ({
 };
 
 // ============================================
-// 🎭 Main Chat Screen - AI Orchestrator
+// 🎭 Main Chat Screen
 // ============================================
 export default function ChatScreen() {
-  // State
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
@@ -344,9 +275,7 @@ export default function ChatScreen() {
   const [orchestratorStatus, setOrchestratorStatus] = useState<string>('ready');
   
   const scrollViewRef = useRef<ScrollView>(null);
-  const inputRef = useRef<TextInput>(null);
 
-  // Web Speech Recognition
   const {
     isListening,
     transcript,
@@ -358,40 +287,28 @@ export default function ChatScreen() {
     reset: resetSpeech,
   } = useWebSpeechRecognition();
 
-  // ============================================
-  // 🚀 Initialization
-  // ============================================
   useEffect(() => {
     setMessages([{
       id: '1',
       role: 'assistant',
-      text: 'Вітаю! Я — ваш персональний сомельє.\n\n🎤 Натисніть мікрофон і скажіть запит — я одразу відповім голосом!\n\nНаприклад: "Яке вино до стейку?"',
+      text: 'Вітаю! Я ваш персональний сомельє.\n\n🎤 Натисніть мікрофон і скажіть запит — я одразу відповім голосом!',
       timestamp: new Date(),
     }]);
-
     loadUserPreferences();
-    requestPermissions();
   }, []);
 
-  // ============================================
-  // 🎵 ORCHESTRATOR: Process voice when final
-  // ============================================
+  // Process voice input when recognition is final
   useEffect(() => {
     if (isFinal && transcript && !isProcessingAI) {
-      // Voice input received - start orchestration
       runAIOrchestrator(transcript);
       resetSpeech();
     }
   }, [isFinal, transcript]);
 
-  // Show interim transcript in input field
+  // Show interim transcript
   useEffect(() => {
-    if (isListening && interimTranscript) {
-      setInputText(interimTranscript);
-    }
-    if (transcript) {
-      setInputText(transcript);
-    }
+    if (isListening && interimTranscript) setInputText(interimTranscript);
+    if (transcript) setInputText(transcript);
   }, [interimTranscript, transcript, isListening]);
 
   const loadUserPreferences = async () => {
@@ -402,17 +319,7 @@ export default function ChatScreen() {
         setUserLanguage(user.preferred_language || 'UK');
       }
     } catch (error) {
-      console.log('Error loading preferences:', error);
-    }
-  };
-
-  const requestPermissions = async () => {
-    if (Platform.OS !== 'web') {
-      try {
-        await Audio.requestPermissionsAsync();
-      } catch (error) {
-        console.error('Error requesting audio permission:', error);
-      }
+      console.log('Error loading preferences');
     }
   };
 
@@ -422,17 +329,14 @@ export default function ChatScreen() {
   const runAIOrchestrator = async (v_input: string) => {
     if (!v_input.trim()) return;
 
-    console.log('🎭 AI Orchestrator started with:', v_input);
+    console.log('🎭 Orchestrator: v_input =', v_input);
     
-    // Stop listening
     setIsRecording(false);
     stopListening();
-    
-    // Clear input
     setInputText('');
-    
-    // Step 1: Add user message to chat
     setOrchestratorStatus('thinking');
+    
+    // Add user message
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
@@ -441,29 +345,25 @@ export default function ChatScreen() {
       isVoice: true,
     };
     setMessages(prev => [...prev, userMessage]);
-
-    // Step 2: Send to Gemini AI
     setIsProcessingAI(true);
     
     try {
       const userId = await AsyncStorage.getItem('userId');
       if (!userId) throw new Error('User not found');
 
-      // Call AI with sommelier prompt
+      // Send to Gemini AI
       const response = await api.sendChatMessage(
         userId,
-        `${SOMMELIER_PROMPT}\n\nЗапит користувача: ${v_input}`,
+        `${SOMMELIER_PROMPT}\n\nЗапит: ${v_input}`,
         sessionId || undefined
       );
 
-      if (!sessionId && response.session_id) {
-        setSessionId(response.session_id);
-      }
+      if (!sessionId && response.session_id) setSessionId(response.session_id);
 
       const v_output = response.response;
-      console.log('🧠 AI Response:', v_output.substring(0, 100));
+      console.log('🧠 Orchestrator: v_output =', v_output.substring(0, 80));
 
-      // Step 3: Add AI response to chat
+      // Add AI response
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -471,13 +371,11 @@ export default function ChatScreen() {
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, assistantMessage]);
-      
       setIsProcessingAI(false);
       
-      // Step 4: Speak the response (TTS)
+      // Speak with natural voice
       setOrchestratorStatus('speaking');
-      await speakWithNaturalVoice(v_output);
-      
+      await speakNaturally(v_output);
       setOrchestratorStatus('ready');
 
     } catch (error) {
@@ -489,54 +387,60 @@ export default function ChatScreen() {
   };
 
   // ============================================
-  // 🔊 TTS - Natural Voice Output
+  // 🔊 NATURAL TTS - Human-like Voice
   // ============================================
-  const speakWithNaturalVoice = async (v_output: string): Promise<void> => {
-    return new Promise((resolve) => {
+  const speakNaturally = async (v_output: string): Promise<void> => {
+    return new Promise(async (resolve) => {
       // Stop any current speech
       Speech.stop();
 
       // Detect language
       const detectLanguage = (text: string): string => {
-        const hasUkrainian = /[іїєґ]/i.test(text);
-        const hasRussian = /[ыэъ]/i.test(text) || /\b(что|как|это|для|или|на|вы|мы)\b/i.test(text);
-        const isEnglish = /^[a-zA-Z\s.,!?'"()\-:;]+$/.test(text.substring(0, 100));
-        
-        if (isEnglish) return 'en-US';
-        if (hasRussian && !hasUkrainian) return 'ru-RU';
+        const sample = text.substring(0, 150);
+        if (/[іїєґ]/i.test(sample)) return 'uk-UA';
+        if (/[ыэъ]/i.test(sample) || /\b(что|как|это|для|или|на|вы|мы|не)\b/i.test(sample)) return 'ru-RU';
+        if (/^[a-zA-Z\s.,!?'"()\-:;0-9]+$/.test(sample)) return 'en-US';
         return 'uk-UA';
       };
 
       const language = detectLanguage(v_output);
+      console.log('🗣️ Language detected:', language);
 
       // Clean text for natural speech
       const cleanText = v_output
-        .replace(/[🍷🌡🍽⭐✨💫🎤🔊🥂🍾]/g, '')
-        .replace(/\*\*([^*]+)\*\*/g, '$1')  // Remove bold
-        .replace(/\*([^*]+)\*/g, '$1')       // Remove italic
-        .replace(/#{1,3}\s/g, '')            // Remove headers
-        .replace(/•\s/g, '')                 // Remove bullets
-        .replace(/\n{2,}/g, '. ')            // Double newlines to pause
-        .replace(/\n/g, ', ')                // Single newline to comma
-        .replace(/\s{2,}/g, ' ')             // Multiple spaces
+        .replace(/[🍷🌡🍽⭐✨💫🎤🔊🥂🍾🍇🍎]/g, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/\*([^*]+)\*/g, '$1')
+        .replace(/#{1,3}\s/g, '')
+        .replace(/•\s/g, '')
+        .replace(/\n{2,}/g, '. ')
+        .replace(/\n/g, ', ')
+        .replace(/\s{2,}/g, ' ')
+        .replace(/\([^)]*\)/g, '')  // Remove parentheses content
         .trim()
-        .substring(0, 600);                  // Limit length
+        .substring(0, 500);
 
-      console.log('🔊 Speaking:', cleanText.substring(0, 50) + '...');
-      
+      // Get language-specific rate
+      const rate = TTS_CONFIG.languageRates[language] || TTS_CONFIG.rate;
+
+      console.log('🔊 TTS Config: pitch=', TTS_CONFIG.pitch, 'rate=', rate);
+
+      // ⏳ "Taking breath" pause before speaking
+      await new Promise(r => setTimeout(r, TTS_CONFIG.pauseBeforeMs));
+
       setIsSpeaking(true);
 
       Speech.speak(cleanText, {
         language,
-        pitch: TTS_CONFIG.pitch,      // 1.1 - friendly tone
-        rate: TTS_CONFIG.rate,        // 1.0 - natural speed
+        pitch: TTS_CONFIG.pitch,    // 1.1 - warmer, more emotional
+        rate: rate,                  // 1.05-1.1 - slightly faster, more natural
         onDone: () => {
-          console.log('✅ Speech completed');
+          console.log('✅ Speech done');
           setIsSpeaking(false);
           resolve();
         },
         onError: (error) => {
-          console.error('TTS Error:', error);
+          console.error('TTS error:', error);
           setIsSpeaking(false);
           resolve();
         },
@@ -559,28 +463,22 @@ export default function ChatScreen() {
   // ============================================
   const handleVoicePress = () => {
     if (isSpeaking) {
-      // If speaking, stop
       stopSpeaking();
       return;
     }
     
     if (isRecording || isListening) {
-      // Stop recording
       setIsRecording(false);
       stopListening();
       setOrchestratorStatus('ready');
     } else {
-      // Start recording
       if (Platform.OS === 'web' && webSpeechSupported) {
         setIsRecording(true);
         setOrchestratorStatus('listening');
         setInputText('');
         startListening(userLanguage);
       } else {
-        Alert.alert(
-          'Голосовий ввід',
-          'Використайте браузер Chrome для голосового вводу або введіть текст'
-        );
+        Alert.alert('Голосовий ввід', 'Використайте Chrome для голосового вводу');
       }
     }
   };
@@ -606,12 +504,7 @@ export default function ChatScreen() {
       const userId = await AsyncStorage.getItem('userId');
       if (!userId) throw new Error('User not found');
 
-      const response = await api.sendChatMessage(
-        userId,
-        text.trim(),
-        sessionId || undefined
-      );
-
+      const response = await api.sendChatMessage(userId, text.trim(), sessionId || undefined);
       if (!sessionId) setSessionId(response.session_id);
 
       const assistantMessage: Message = {
@@ -623,7 +516,6 @@ export default function ChatScreen() {
 
       setMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
-      console.error('Chat error:', error);
       Alert.alert('Помилка', 'Не вдалося отримати відповідь');
     } finally {
       setIsLoading(false);
@@ -642,13 +534,12 @@ export default function ChatScreen() {
       });
 
       if (!result.canceled && result.assets[0]?.base64) {
-        const userMessage: Message = {
+        setMessages(prev => [...prev, {
           id: Date.now().toString(),
           role: 'user',
           text: '📷 Фото для аналізу',
           timestamp: new Date(),
-        };
-        setMessages(prev => [...prev, userMessage]);
+        }]);
         setIsLoading(true);
 
         const userId = await AsyncStorage.getItem('userId');
@@ -656,33 +547,30 @@ export default function ChatScreen() {
 
         const response = await api.sendChatMessage(
           userId,
-          'Проаналізуй це фото пляшки або полиці і дай рекомендації як сомельє',
+          'Проаналізуй фото і дай коротку рекомендацію як сомельє',
           sessionId || undefined,
           result.assets[0].base64
         );
 
-        const assistantMessage: Message = {
+        setMessages(prev => [...prev, {
           id: (Date.now() + 1).toString(),
           role: 'assistant',
           text: response.response,
           timestamp: new Date(),
-        };
-        setMessages(prev => [...prev, assistantMessage]);
+        }]);
         setIsLoading(false);
 
-        // Auto-speak photo analysis
-        await speakWithNaturalVoice(response.response);
+        // Auto-speak
+        await speakNaturally(response.response);
       }
     } catch (error) {
-      console.error('Image error:', error);
       setIsLoading(false);
     }
   };
 
-  // Status display
   const getStatusText = () => {
     switch (orchestratorStatus) {
-      case 'listening': return '🎤 Слухаю вас...';
+      case 'listening': return '🎤 Слухаю...';
       case 'thinking': return '🧠 Думаю...';
       case 'speaking': return '🔊 Говорю...';
       default: return '● Онлайн';
@@ -700,7 +588,6 @@ export default function ChatScreen() {
           <Animated.View style={[
             styles.avatarContainer,
             isSpeaking && styles.avatarSpeaking,
-            isProcessingAI && styles.avatarThinking,
           ]}>
             <Text style={styles.avatarText}>C</Text>
           </Animated.View>
@@ -726,18 +613,10 @@ export default function ChatScreen() {
         <View style={styles.recordingBanner}>
           <View style={styles.soundWave}>
             {[1,2,3,4,5].map((i) => (
-              <Animated.View 
-                key={i} 
-                style={[
-                  styles.soundBar,
-                  { height: 8 + Math.random() * 16 }
-                ]} 
-              />
+              <Animated.View key={i} style={[styles.soundBar, { height: 6 + Math.random() * 18 }]} />
             ))}
           </View>
-          <Text style={styles.recordingText}>
-            Говоріть зараз... Натисніть мікрофон щоб завершити
-          </Text>
+          <Text style={styles.recordingText}>Говоріть зараз...</Text>
         </View>
       )}
 
@@ -750,32 +629,19 @@ export default function ChatScreen() {
       >
         {messages.map((message) => (
           <View key={message.id}>
-            <View
-              style={[
-                styles.messageBubble,
-                message.role === 'user' ? styles.userBubble : styles.assistantBubble,
-              ]}
-            >
+            <View style={[
+              styles.messageBubble,
+              message.role === 'user' ? styles.userBubble : styles.assistantBubble,
+            ]}>
               {message.isVoice && (
-                <Ionicons 
-                  name="mic" 
-                  size={14} 
-                  color={Colors.goldDark} 
-                  style={styles.voiceIcon}
-                />
+                <Ionicons name="mic" size={14} color={Colors.goldDark} style={styles.voiceIcon} />
               )}
-              <Text style={[
-                styles.messageText,
-                message.role === 'user' && styles.userMessageText
-              ]}>
+              <Text style={[styles.messageText, message.role === 'user' && styles.userMessageText]}>
                 {message.text}
               </Text>
             </View>
             {message.role === 'assistant' && (
-              <TouchableOpacity
-                style={styles.speakBtn}
-                onPress={() => speakWithNaturalVoice(message.text)}
-              >
+              <TouchableOpacity style={styles.speakBtn} onPress={() => speakNaturally(message.text)}>
                 <Ionicons name="volume-medium-outline" size={16} color={Colors.textMuted} />
               </TouchableOpacity>
             )}
@@ -785,9 +651,7 @@ export default function ChatScreen() {
         {(isLoading || isProcessingAI) && (
           <View style={styles.loadingBubble}>
             <ActivityIndicator size="small" color={Colors.gold} />
-            <Text style={styles.loadingText}>
-              {isProcessingAI ? 'Сомельє готує відповідь...' : 'Обробка...'}
-            </Text>
+            <Text style={styles.loadingText}>Сомельє готує відповідь...</Text>
           </View>
         )}
       </ScrollView>
@@ -795,46 +659,32 @@ export default function ChatScreen() {
       {/* Quick Prompts */}
       {messages.length <= 1 && !isVoiceActive && (
         <View style={styles.quickPrompts}>
-          {['Вино до стейку', 'Що до сиру?', 'Коктейль на вечір'].map((label, i) => (
-            <TouchableOpacity
-              key={i}
-              style={styles.quickPromptBtn}
-              onPress={() => runAIOrchestrator(label)}
-            >
+          {['Вино до стейку', 'Що до сиру?', 'Коктейль'].map((label, i) => (
+            <TouchableOpacity key={i} style={styles.quickPromptBtn} onPress={() => runAIOrchestrator(label)}>
               <Text style={styles.quickPromptText}>{label}</Text>
             </TouchableOpacity>
           ))}
         </View>
       )}
 
-      {/* Input Area */}
+      {/* Input */}
       <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'}>
         <View style={styles.inputContainer}>
-          <TouchableOpacity
-            style={styles.cameraBtn}
-            onPress={pickAndSendImage}
-            disabled={isVoiceActive || isProcessingAI}
-          >
+          <TouchableOpacity style={styles.cameraBtn} onPress={pickAndSendImage} disabled={isVoiceActive || isProcessingAI}>
             <Ionicons name="camera" size={22} color={Colors.textMuted} />
           </TouchableOpacity>
           
           <TextInput
-            ref={inputRef}
-            style={[
-              styles.textInput,
-              isVoiceActive && styles.textInputListening,
-            ]}
-            placeholder={isVoiceActive ? "Слухаю..." : "Напишіть або натисніть 🎤"}
+            style={[styles.textInput, isVoiceActive && styles.textInputListening]}
+            placeholder={isVoiceActive ? "Слухаю..." : "Напишіть або 🎤"}
             placeholderTextColor={isVoiceActive ? Colors.gold : Colors.textMuted}
             value={inputText}
             onChangeText={setInputText}
             multiline
             maxLength={500}
             editable={!isVoiceActive && !isProcessingAI}
-            onSubmitEditing={() => sendTextMessage(inputText)}
           />
           
-          {/* Voice Button - Main Control */}
           <VoiceButton
             isRecording={isVoiceActive}
             isProcessing={isProcessingAI}
@@ -843,12 +693,8 @@ export default function ChatScreen() {
             disabled={isLoading}
           />
           
-          {/* Send Button */}
           {showSendButton && (
-            <TouchableOpacity
-              style={styles.sendBtn}
-              onPress={() => sendTextMessage(inputText)}
-            >
+            <TouchableOpacity style={styles.sendBtn} onPress={() => sendTextMessage(inputText)}>
               <Ionicons name="send" size={20} color={Colors.black} />
             </TouchableOpacity>
           )}
@@ -862,10 +708,7 @@ export default function ChatScreen() {
 // 🎨 Styles
 // ============================================
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.black,
-  },
+  container: { flex: 1, backgroundColor: Colors.black },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -874,10 +717,7 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: Colors.border,
   },
-  headerLeft: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
+  headerLeft: { flexDirection: 'row', alignItems: 'center' },
   avatarContainer: {
     width: 44,
     height: 44,
@@ -891,33 +731,13 @@ const styles = StyleSheet.create({
     shadowColor: Colors.gold,
     shadowOffset: { width: 0, height: 0 },
     shadowOpacity: 1,
-    shadowRadius: 15,
-    elevation: 15,
+    shadowRadius: 20,
+    elevation: 20,
   },
-  avatarThinking: {
-    backgroundColor: Colors.goldLight,
-  },
-  avatarText: {
-    color: Colors.black,
-    fontSize: 20,
-    fontWeight: '900',
-    fontFamily: 'Georgia',
-  },
-  headerTitle: {
-    fontSize: 17,
-    fontWeight: '700',
-    color: Colors.textPrimary,
-    letterSpacing: 1,
-  },
-  headerSubtitle: {
-    fontSize: 12,
-    color: Colors.textMuted,
-    marginTop: 2,
-  },
-  headerSubtitleActive: {
-    color: Colors.gold,
-    fontWeight: '600',
-  },
+  avatarText: { color: Colors.black, fontSize: 20, fontWeight: '900', fontFamily: 'Georgia' },
+  headerTitle: { fontSize: 17, fontWeight: '700', color: Colors.textPrimary, letterSpacing: 1 },
+  headerSubtitle: { fontSize: 12, color: Colors.textMuted, marginTop: 2 },
+  headerSubtitleActive: { color: Colors.gold, fontWeight: '600' },
   stopButton: {
     width: 40,
     height: 40,
@@ -934,31 +754,13 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     paddingVertical: 12,
     backgroundColor: Colors.goldTransparent,
-    borderBottomWidth: 1,
-    borderBottomColor: Colors.goldTransparent40,
     gap: 12,
   },
-  soundWave: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 3,
-  },
-  soundBar: {
-    width: 3,
-    backgroundColor: Colors.gold,
-    borderRadius: 2,
-  },
-  recordingText: {
-    fontSize: 13,
-    color: Colors.gold,
-    fontWeight: '500',
-  },
-  messagesContainer: {
-    flex: 1,
-  },
-  messagesContent: {
-    padding: 16,
-  },
+  soundWave: { flexDirection: 'row', alignItems: 'center', gap: 3 },
+  soundBar: { width: 3, backgroundColor: Colors.gold, borderRadius: 2 },
+  recordingText: { fontSize: 13, color: Colors.gold, fontWeight: '500' },
+  messagesContainer: { flex: 1 },
+  messagesContent: { padding: 16 },
   messageBubble: {
     maxWidth: '85%',
     padding: 14,
@@ -967,35 +769,12 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
   },
-  userBubble: {
-    alignSelf: 'flex-end',
-    backgroundColor: Colors.gold,
-    borderBottomRightRadius: 4,
-  },
-  assistantBubble: {
-    alignSelf: 'flex-start',
-    backgroundColor: Colors.surfaceElevated,
-    borderBottomLeftRadius: 4,
-  },
-  voiceIcon: {
-    marginRight: 6,
-    marginTop: 3,
-  },
-  messageText: {
-    fontSize: 15,
-    lineHeight: 22,
-    color: Colors.textPrimary,
-    flex: 1,
-  },
-  userMessageText: {
-    color: Colors.black,
-  },
-  speakBtn: {
-    alignSelf: 'flex-start',
-    padding: 6,
-    marginBottom: 10,
-    marginLeft: 10,
-  },
+  userBubble: { alignSelf: 'flex-end', backgroundColor: Colors.gold, borderBottomRightRadius: 4 },
+  assistantBubble: { alignSelf: 'flex-start', backgroundColor: Colors.surfaceElevated, borderBottomLeftRadius: 4 },
+  voiceIcon: { marginRight: 6, marginTop: 3 },
+  messageText: { fontSize: 15, lineHeight: 22, color: Colors.textPrimary, flex: 1 },
+  userMessageText: { color: Colors.black },
+  speakBtn: { alignSelf: 'flex-start', padding: 6, marginBottom: 10, marginLeft: 10 },
   loadingBubble: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1005,17 +784,8 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     gap: 10,
   },
-  loadingText: {
-    fontSize: 14,
-    color: Colors.gold,
-    fontStyle: 'italic',
-  },
-  quickPrompts: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingBottom: 10,
-    gap: 8,
-  },
+  loadingText: { fontSize: 14, color: Colors.gold, fontStyle: 'italic' },
+  quickPrompts: { flexDirection: 'row', paddingHorizontal: 16, paddingBottom: 10, gap: 8 },
   quickPromptBtn: {
     backgroundColor: Colors.surfaceElevated,
     paddingHorizontal: 14,
@@ -1024,11 +794,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.goldTransparent40,
   },
-  quickPromptText: {
-    fontSize: 13,
-    color: Colors.gold,
-    fontWeight: '500',
-  },
+  quickPromptText: { fontSize: 13, color: Colors.gold, fontWeight: '500' },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
@@ -1057,30 +823,10 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: Colors.textPrimary,
   },
-  textInputListening: {
-    borderWidth: 1,
-    borderColor: Colors.gold,
-    backgroundColor: Colors.goldTransparent,
-  },
-  voiceButtonWrapper: {
-    width: 58,
-    height: 58,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  pulseRing: {
-    position: 'absolute',
-    width: 58,
-    height: 58,
-    borderRadius: 29,
-    backgroundColor: Colors.gold,
-  },
-  pulseRing2: {
-    backgroundColor: Colors.goldLight,
-  },
-  pulseRing3: {
-    backgroundColor: Colors.goldDark,
-  },
+  textInputListening: { borderWidth: 1, borderColor: Colors.gold, backgroundColor: Colors.goldTransparent },
+  voiceButtonWrapper: { width: 58, height: 58, justifyContent: 'center', alignItems: 'center' },
+  pulseRing: { position: 'absolute', width: 58, height: 58, borderRadius: 29, backgroundColor: Colors.gold },
+  pulseRing2: { backgroundColor: Colors.goldLight },
   voiceButton: {
     width: 52,
     height: 52,
@@ -1100,14 +846,8 @@ const styles = StyleSheet.create({
     shadowRadius: 20,
     elevation: 15,
   },
-  voiceButtonProcessing: {
-    borderColor: Colors.gold,
-    borderWidth: 2,
-  },
-  voiceButtonSpeaking: {
-    backgroundColor: Colors.goldTransparent,
-    borderColor: Colors.gold,
-  },
+  voiceButtonProcessing: { borderColor: Colors.gold, borderWidth: 2 },
+  voiceButtonSpeaking: { backgroundColor: Colors.goldTransparent, borderColor: Colors.gold },
   sendBtn: {
     width: 44,
     height: 44,
