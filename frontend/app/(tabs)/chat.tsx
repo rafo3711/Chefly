@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -17,6 +17,7 @@ import { Ionicons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as Speech from 'expo-speech';
 import { Audio } from 'expo-av';
+import * as FileSystem from 'expo-file-system';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Colors from '../../src/theme/colors';
 import { DarkCard } from '../../src/components/DarkCard';
@@ -36,85 +37,207 @@ const QUICK_PROMPTS = [
   { label: 'Що до сиру?', icon: 'nutrition' as const },
 ];
 
-// Voice recording component with pulse animation
+// Web Speech Recognition hook
+const useWebSpeechRecognition = () => {
+  const [isListening, setIsListening] = useState(false);
+  const [transcript, setTranscript] = useState('');
+  const [isSupported, setIsSupported] = useState(false);
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+      if (SpeechRecognition) {
+        setIsSupported(true);
+        const recognition = new SpeechRecognition();
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.lang = 'uk-UA'; // Default to Ukrainian, will auto-detect
+        
+        // Enable multiple languages
+        recognition.lang = 'uk-UA';
+        
+        recognition.onresult = (event: any) => {
+          let finalTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const result = event.results[i];
+            if (result.isFinal) {
+              finalTranscript += result[0].transcript;
+            }
+          }
+          if (finalTranscript) {
+            setTranscript(finalTranscript);
+          }
+        };
+
+        recognition.onend = () => {
+          setIsListening(false);
+        };
+
+        recognition.onerror = (event: any) => {
+          console.error('Speech recognition error:', event.error);
+          setIsListening(false);
+        };
+
+        recognitionRef.current = recognition;
+      }
+    }
+  }, []);
+
+  const startListening = useCallback((language: string = 'uk-UA') => {
+    if (recognitionRef.current && isSupported) {
+      setTranscript('');
+      // Map language codes
+      const langMap: Record<string, string> = {
+        'UK': 'uk-UA',
+        'EN': 'en-US', 
+        'RU': 'ru-RU',
+      };
+      recognitionRef.current.lang = langMap[language] || language;
+      
+      try {
+        recognitionRef.current.start();
+        setIsListening(true);
+      } catch (error) {
+        console.error('Failed to start recognition:', error);
+      }
+    }
+  }, [isSupported]);
+
+  const stopListening = useCallback(() => {
+    if (recognitionRef.current && isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    }
+  }, [isListening]);
+
+  return {
+    isListening,
+    transcript,
+    isSupported,
+    startListening,
+    stopListening,
+    resetTranscript: () => setTranscript(''),
+  };
+};
+
+// Voice button with pulse animation
 const VoiceButton = ({ 
   isRecording, 
-  onPressIn, 
-  onPressOut,
+  isProcessing,
+  onPress,
   disabled 
 }: { 
   isRecording: boolean;
-  onPressIn: () => void;
-  onPressOut: () => void;
+  isProcessing: boolean;
+  onPress: () => void;
   disabled?: boolean;
 }) => {
   const pulseAnim = useRef(new Animated.Value(1)).current;
   const opacityAnim = useRef(new Animated.Value(0)).current;
+  const rotateAnim = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     if (isRecording) {
-      // Pulse animation
+      // Pulse animation for recording
       Animated.loop(
         Animated.sequence([
           Animated.parallel([
             Animated.timing(pulseAnim, {
-              toValue: 1.3,
-              duration: 800,
+              toValue: 1.4,
+              duration: 600,
               useNativeDriver: true,
             }),
             Animated.timing(opacityAnim, {
-              toValue: 0.6,
-              duration: 800,
+              toValue: 0.7,
+              duration: 600,
               useNativeDriver: true,
             }),
           ]),
           Animated.parallel([
             Animated.timing(pulseAnim, {
               toValue: 1,
-              duration: 800,
+              duration: 600,
               useNativeDriver: true,
             }),
             Animated.timing(opacityAnim, {
               toValue: 0,
-              duration: 800,
+              duration: 600,
               useNativeDriver: true,
             }),
           ]),
         ])
       ).start();
+    } else if (isProcessing) {
+      // Rotation animation for processing
+      Animated.loop(
+        Animated.timing(rotateAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        })
+      ).start();
     } else {
       pulseAnim.setValue(1);
       opacityAnim.setValue(0);
+      rotateAnim.setValue(0);
     }
-  }, [isRecording]);
+  }, [isRecording, isProcessing]);
+
+  const rotation = rotateAnim.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
 
   return (
     <View style={styles.voiceButtonContainer}>
-      {/* Pulse ring */}
-      <Animated.View
-        style={[
-          styles.pulseRing,
-          {
-            transform: [{ scale: pulseAnim }],
-            opacity: opacityAnim,
-          },
-        ]}
-      />
+      {/* Outer pulse ring */}
+      {isRecording && (
+        <>
+          <Animated.View
+            style={[
+              styles.pulseRing,
+              styles.pulseRingOuter,
+              {
+                transform: [{ scale: pulseAnim }],
+                opacity: opacityAnim,
+              },
+            ]}
+          />
+          <Animated.View
+            style={[
+              styles.pulseRing,
+              styles.pulseRingInner,
+              {
+                transform: [{ scale: Animated.multiply(pulseAnim, 0.7) }],
+                opacity: Animated.multiply(opacityAnim, 1.5),
+              },
+            ]}
+          />
+        </>
+      )}
+      
       <TouchableOpacity
         style={[
           styles.voiceButton,
-          isRecording && styles.voiceButtonActive,
+          isRecording && styles.voiceButtonRecording,
+          isProcessing && styles.voiceButtonProcessing,
         ]}
-        onPressIn={onPressIn}
-        onPressOut={onPressOut}
-        disabled={disabled}
-        activeOpacity={0.8}
+        onPress={onPress}
+        disabled={disabled || isProcessing}
+        activeOpacity={0.7}
       >
-        <Ionicons
-          name={isRecording ? 'mic' : 'mic-outline'}
-          size={24}
-          color={isRecording ? Colors.black : Colors.gold}
-        />
+        {isProcessing ? (
+          <Animated.View style={{ transform: [{ rotate: rotation }] }}>
+            <Ionicons name="sync" size={24} color={Colors.gold} />
+          </Animated.View>
+        ) : (
+          <Ionicons
+            name={isRecording ? 'mic' : 'mic-outline'}
+            size={24}
+            color={isRecording ? Colors.black : Colors.gold}
+          />
+        )}
       </TouchableOpacity>
     </View>
   );
@@ -126,37 +249,90 @@ export default function ChatScreen() {
   const [isLoading, setIsLoading] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
+  const [isProcessingVoice, setIsProcessingVoice] = useState(false);
   const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isSpeaking, setIsSpeaking] = useState(false);
+  const [userLanguage, setUserLanguage] = useState('UK');
   const scrollViewRef = useRef<ScrollView>(null);
+
+  // Web Speech Recognition
+  const {
+    isListening,
+    transcript,
+    isSupported: webSpeechSupported,
+    startListening,
+    stopListening,
+    resetTranscript,
+  } = useWebSpeechRecognition();
 
   useEffect(() => {
     // Initial greeting
     setMessages([{
       id: '1',
       role: 'assistant',
-      text: 'Добрий вечір! Я — ваш приватний сомельє. Чим можу допомогти сьогодні?\n\nЗапитайте мене про:\n• Підбір вина до страви\n• Рекомендації в межах бюджету\n• Страви до вашого напою\n\n🎤 Натисніть і утримуйте мікрофон для голосового запиту',
+      text: 'Добрий вечір! Я — ваш приватний сомельє.\n\n🎤 Натисніть на мікрофон і скажіть ваш запит — я відповім голосом!\n\nАбо напишіть текстом.',
       timestamp: new Date(),
     }]);
 
-    // Request audio permissions
-    requestAudioPermission();
+    loadUserPreferences();
+    requestPermissions();
   }, []);
 
-  const requestAudioPermission = async () => {
+  // Process transcript when speech recognition completes
+  useEffect(() => {
+    if (transcript && !isListening && !isProcessingVoice) {
+      processVoiceInput(transcript);
+      resetTranscript();
+    }
+  }, [transcript, isListening]);
+
+  const loadUserPreferences = async () => {
     try {
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
-        console.log('Audio permission not granted');
+      const userId = await AsyncStorage.getItem('userId');
+      if (userId) {
+        const user = await api.getUser(userId);
+        setUserLanguage(user.preferred_language || 'UK');
       }
     } catch (error) {
-      console.error('Error requesting audio permission:', error);
+      console.log('Error loading preferences:', error);
     }
   };
 
-  const startRecording = async () => {
+  const requestPermissions = async () => {
+    if (Platform.OS !== 'web') {
+      try {
+        const { status } = await Audio.requestPermissionsAsync();
+        if (status !== 'granted') {
+          console.log('Audio permission not granted');
+        }
+      } catch (error) {
+        console.error('Error requesting audio permission:', error);
+      }
+    }
+  };
+
+  // Main voice button handler
+  const handleVoiceButtonPress = async () => {
+    if (isRecording || isListening) {
+      // Stop recording
+      if (Platform.OS === 'web' && webSpeechSupported) {
+        stopListening();
+      } else {
+        await stopNativeRecording();
+      }
+    } else {
+      // Start recording
+      if (Platform.OS === 'web' && webSpeechSupported) {
+        startListening(userLanguage);
+        setIsRecording(true);
+      } else {
+        await startNativeRecording();
+      }
+    }
+  };
+
+  const startNativeRecording = async () => {
     try {
-      // Configure audio mode
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
@@ -168,14 +344,13 @@ export default function ChatScreen() {
       
       setRecording(newRecording);
       setIsRecording(true);
-      console.log('Recording started');
     } catch (error) {
       console.error('Failed to start recording:', error);
       Alert.alert('Помилка', 'Не вдалося почати запис');
     }
   };
 
-  const stopRecording = async () => {
+  const stopNativeRecording = async () => {
     if (!recording) return;
 
     try {
@@ -183,52 +358,52 @@ export default function ChatScreen() {
       await recording.stopAndUnloadAsync();
       
       const uri = recording.getURI();
-      console.log('Recording stopped, URI:', uri);
-      
       setRecording(null);
 
       if (uri) {
-        await processVoiceMessage(uri);
+        // Convert to base64 and send to backend
+        setIsProcessingVoice(true);
+        const base64 = await FileSystem.readAsStringAsync(uri, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+        
+        await processAudioWithBackend(base64);
       }
     } catch (error) {
       console.error('Failed to stop recording:', error);
       setIsRecording(false);
       setRecording(null);
+      setIsProcessingVoice(false);
     }
   };
 
-  const processVoiceMessage = async (audioUri: string) => {
-    try {
-      setIsLoading(true);
-      
-      // For now, we'll use a simulated transcription
-      // In production, you'd send the audio to a transcription service
-      // Since Web Speech API isn't available in React Native, we'll use the chat endpoint
-      
-      // Create a voice message placeholder
-      const userMessage: Message = {
-        id: Date.now().toString(),
-        role: 'user',
-        text: '🎤 Голосове повідомлення (обробляється...)',
-        timestamp: new Date(),
-        isVoice: true,
-      };
-      
-      setMessages(prev => [...prev, userMessage]);
+  // Process voice input (from Web Speech API)
+  const processVoiceInput = async (userText: string) => {
+    if (!userText.trim()) return;
+    
+    setIsRecording(false);
+    setIsProcessingVoice(true);
 
-      // Since we can't do STT natively without external service,
-      // we'll prompt the user to type or use a fallback
-      // For demo purposes, let's send a default voice query
-      
+    // Add user message to chat
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      role: 'user',
+      text: userText,
+      timestamp: new Date(),
+      isVoice: true,
+    };
+    setMessages(prev => [...prev, userMessage]);
+
+    try {
       const userId = await AsyncStorage.getItem('userId');
       if (!userId) {
         throw new Error('User not found');
       }
 
-      // Send a general voice query to AI
+      // Send to AI with sommelier prompt
       const response = await api.sendChatMessage(
         userId,
-        'Користувач надіслав голосове повідомлення. Привітайся та запитай чим можеш допомогти з вибором напою чи страви.',
+        userText,
         sessionId || undefined
       );
 
@@ -236,10 +411,55 @@ export default function ChatScreen() {
         setSessionId(response.session_id);
       }
 
-      // Update the user message
+      const aiResponseText = response.response;
+
+      // Add AI response to chat
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        role: 'assistant',
+        text: aiResponseText,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, assistantMessage]);
+
+      // AUTO-SPEAK the response immediately
+      await speakResponse(aiResponseText);
+
+    } catch (error) {
+      console.error('Voice processing error:', error);
+      Alert.alert('Помилка', 'Не вдалося обробити запит');
+    } finally {
+      setIsProcessingVoice(false);
+    }
+  };
+
+  // Process audio with backend (for native mobile)
+  const processAudioWithBackend = async (audioBase64: string) => {
+    try {
+      const userId = await AsyncStorage.getItem('userId');
+      if (!userId) throw new Error('User not found');
+
+      // Add placeholder message
+      const userMessage: Message = {
+        id: Date.now().toString(),
+        role: 'user',
+        text: '🎤 Обробка голосу...',
+        timestamp: new Date(),
+        isVoice: true,
+      };
+      setMessages(prev => [...prev, userMessage]);
+
+      // Send to voice chat endpoint
+      const response = await api.sendVoiceChat(userId, audioBase64, sessionId || undefined);
+
+      if (!sessionId && response.session_id) {
+        setSessionId(response.session_id);
+      }
+
+      // Update user message with transcribed text
       setMessages(prev => prev.map(msg => 
         msg.id === userMessage.id 
-          ? { ...msg, text: '🎤 Голосовий запит' }
+          ? { ...msg, text: response.user_text || '🎤 Голосовий запит' }
           : msg
       ));
 
@@ -250,44 +470,66 @@ export default function ChatScreen() {
         text: response.response,
         timestamp: new Date(),
       };
-
       setMessages(prev => [...prev, assistantMessage]);
-      
-      // Speak the response
-      speakResponse(response.response);
+
+      // AUTO-SPEAK immediately
+      await speakResponse(response.response);
 
     } catch (error) {
-      console.error('Voice processing error:', error);
-      Alert.alert('Помилка', 'Не вдалося обробити голосове повідомлення');
+      console.error('Backend voice error:', error);
+      // Fallback: use text prompt
+      await processVoiceInput('Порекомендуй вино');
     } finally {
-      setIsLoading(false);
+      setIsProcessingVoice(false);
     }
   };
 
-  const speakResponse = (text: string) => {
-    // Detect language for TTS
-    const isEnglish = /^[a-zA-Z\s.,!?'"()-]+$/.test(text.substring(0, 50));
-    const isRussian = /[а-яА-ЯёЁ]/.test(text) && /\b(что|как|это|для|или|на)\b/i.test(text);
-    
-    let language = 'uk-UA'; // Default Ukrainian
-    if (isEnglish) language = 'en-US';
-    else if (isRussian) language = 'ru-RU';
+  // Text-to-Speech with auto language detection
+  const speakResponse = async (text: string): Promise<void> => {
+    return new Promise((resolve) => {
+      // Stop any current speech
+      Speech.stop();
 
-    // Clean text for speech
-    const cleanText = text
-      .replace(/[🍷🌡🍽⭐✨]/g, '')
-      .replace(/\*\*/g, '')
-      .replace(/\n+/g, '. ')
-      .substring(0, 500); // Limit for TTS
+      // Detect language
+      const hasUkrainian = /[іїєґ]/i.test(text);
+      const hasRussian = /[ыэъ]/i.test(text) || /\b(что|как|это|для|или)\b/i.test(text);
+      const isEnglish = /^[a-zA-Z\s.,!?'"()-]+$/.test(text.substring(0, 100));
 
-    setIsSpeaking(true);
-    
-    Speech.speak(cleanText, {
-      language,
-      pitch: 1.0,
-      rate: 0.9,
-      onDone: () => setIsSpeaking(false),
-      onError: () => setIsSpeaking(false),
+      let language = 'uk-UA';
+      if (isEnglish) language = 'en-US';
+      else if (hasRussian && !hasUkrainian) language = 'ru-RU';
+
+      // Clean text for natural speech
+      const cleanText = text
+        .replace(/[🍷🌡🍽⭐✨💫🎤🔊]/g, '')
+        .replace(/\*\*/g, '')
+        .replace(/\*([^*]+)\*/g, '$1')
+        .replace(/\n{2,}/g, '. ')
+        .replace(/\n/g, ', ')
+        .replace(/•/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 800);
+
+      setIsSpeaking(true);
+
+      Speech.speak(cleanText, {
+        language,
+        pitch: 1.0,
+        rate: Platform.OS === 'ios' ? 0.9 : 0.85,
+        onDone: () => {
+          setIsSpeaking(false);
+          resolve();
+        },
+        onError: () => {
+          setIsSpeaking(false);
+          resolve();
+        },
+        onStopped: () => {
+          setIsSpeaking(false);
+          resolve();
+        },
+      });
     });
   };
 
@@ -312,13 +554,11 @@ export default function ChatScreen() {
 
     try {
       const userId = await AsyncStorage.getItem('userId');
-      if (!userId) {
-        throw new Error('User not found');
-      }
+      if (!userId) throw new Error('User not found');
 
       const response = await api.sendChatMessage(
         userId,
-        text.trim() || 'Проаналізуй це фото і дай рекомендації як сомельє',
+        text.trim() || 'Проаналізуй це фото і дай рекомендації',
         sessionId || undefined,
         imageBase64
       );
@@ -335,9 +575,6 @@ export default function ChatScreen() {
       };
 
       setMessages(prev => [...prev, assistantMessage]);
-      
-      // Auto-speak response if it was a voice conversation
-      // speakResponse(response.response);
     } catch (error) {
       console.error('Chat error:', error);
       Alert.alert('Помилка', 'Не вдалося отримати відповідь');
@@ -362,12 +599,17 @@ export default function ChatScreen() {
     }
   };
 
+  const isVoiceActive = isRecording || isListening;
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
       <View style={styles.header}>
         <View style={styles.headerLeft}>
-          <View style={styles.avatarContainer}>
+          <View style={[
+            styles.avatarContainer,
+            isSpeaking && styles.avatarSpeaking
+          ]}>
             <Text style={styles.avatarText}>C</Text>
           </View>
           <View>
@@ -375,10 +617,15 @@ export default function ChatScreen() {
             <View style={styles.statusRow}>
               <View style={[
                 styles.statusDot,
-                isSpeaking && styles.statusDotSpeaking
+                isVoiceActive && styles.statusDotRecording,
+                isSpeaking && styles.statusDotSpeaking,
+                isProcessingVoice && styles.statusDotProcessing,
               ]} />
               <Text style={styles.headerSubtitle}>
-                {isSpeaking ? 'Говорить...' : 'AI Сомельє Онлайн'}
+                {isVoiceActive ? 'Слухаю...' : 
+                 isProcessingVoice ? 'Обробляю...' :
+                 isSpeaking ? 'Говорю...' : 
+                 'AI Сомельє'}
               </Text>
             </View>
           </View>
@@ -392,11 +639,18 @@ export default function ChatScreen() {
               <Ionicons name="stop" size={16} color={Colors.error} />
             </TouchableOpacity>
           )}
-          <TouchableOpacity style={styles.menuButton}>
-            <Ionicons name="ellipsis-vertical" size={20} color={Colors.textMuted} />
-          </TouchableOpacity>
         </View>
       </View>
+
+      {/* Recording indicator banner */}
+      {isVoiceActive && (
+        <Animated.View style={styles.recordingBanner}>
+          <View style={styles.recordingDotAnimated} />
+          <Text style={styles.recordingBannerText}>
+            🎤 Говоріть зараз... Натисніть мікрофон щоб завершити
+          </Text>
+        </Animated.View>
+      )}
 
       {/* Messages */}
       <ScrollView
@@ -411,12 +665,16 @@ export default function ChatScreen() {
               style={[
                 styles.messageBubble,
                 message.role === 'user' ? styles.userBubble : styles.assistantBubble,
+                message.isVoice && styles.voiceMessageBubble,
               ]}
             >
               {message.isVoice && (
-                <View style={styles.voiceIndicator}>
-                  <Ionicons name="mic" size={12} color={Colors.gold} />
-                </View>
+                <Ionicons 
+                  name="mic" 
+                  size={14} 
+                  color={message.role === 'user' ? Colors.goldDark : Colors.gold} 
+                  style={styles.voiceIcon}
+                />
               )}
               <Text style={[
                 styles.messageText,
@@ -425,28 +683,35 @@ export default function ChatScreen() {
                 {message.text}
               </Text>
             </View>
-            {/* Speaker button for assistant messages */}
+            {/* Re-speak button for AI messages */}
             {message.role === 'assistant' && (
               <TouchableOpacity
                 style={styles.speakButton}
                 onPress={() => speakResponse(message.text)}
+                disabled={isSpeaking}
               >
-                <Ionicons name="volume-medium-outline" size={16} color={Colors.textMuted} />
+                <Ionicons 
+                  name={isSpeaking ? "volume-high" : "volume-medium-outline"} 
+                  size={16} 
+                  color={Colors.textMuted} 
+                />
               </TouchableOpacity>
             )}
           </View>
         ))}
 
-        {isLoading && (
+        {(isLoading || isProcessingVoice) && (
           <View style={styles.loadingBubble}>
             <ActivityIndicator size="small" color={Colors.gold} />
-            <Text style={styles.loadingText}>Сомельє думає...</Text>
+            <Text style={styles.loadingText}>
+              {isProcessingVoice ? 'Готую відповідь...' : 'Сомельє думає...'}
+            </Text>
           </View>
         )}
       </ScrollView>
 
       {/* Quick prompts */}
-      {messages.length <= 1 && (
+      {messages.length <= 1 && !isVoiceActive && (
         <View style={styles.quickPrompts}>
           {QUICK_PROMPTS.map((prompt, index) => (
             <TouchableOpacity
@@ -461,15 +726,7 @@ export default function ChatScreen() {
         </View>
       )}
 
-      {/* Recording indicator */}
-      {isRecording && (
-        <View style={styles.recordingIndicator}>
-          <View style={styles.recordingDot} />
-          <Text style={styles.recordingText}>Слухаю вас...</Text>
-        </View>
-      )}
-
-      {/* Input */}
+      {/* Input area */}
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       >
@@ -477,43 +734,40 @@ export default function ChatScreen() {
           <TouchableOpacity
             style={styles.attachButton}
             onPress={pickAndSendImage}
+            disabled={isVoiceActive || isProcessingVoice}
           >
             <Ionicons name="camera-outline" size={22} color={Colors.gold} />
           </TouchableOpacity>
           
           <TextInput
             style={styles.textInput}
-            placeholder="Запитайте сомельє..."
+            placeholder={isVoiceActive ? "Слухаю вас..." : "Або напишіть тут..."}
             placeholderTextColor={Colors.textMuted}
             value={inputText}
             onChangeText={setInputText}
             multiline
             maxLength={1000}
+            editable={!isVoiceActive && !isProcessingVoice}
           />
           
-          {/* Voice Button */}
+          {/* Voice Button - Main interaction */}
           <VoiceButton
-            isRecording={isRecording}
-            onPressIn={startRecording}
-            onPressOut={stopRecording}
+            isRecording={isVoiceActive}
+            isProcessing={isProcessingVoice}
+            onPress={handleVoiceButtonPress}
             disabled={isLoading}
           />
           
-          {/* Send Button */}
-          <TouchableOpacity
-            style={[
-              styles.sendButton,
-              (inputText.trim() || isLoading) && styles.sendButtonActive,
-            ]}
-            onPress={() => sendMessage(inputText)}
-            disabled={!inputText.trim() || isLoading}
-          >
-            <Ionicons
-              name="send"
-              size={18}
-              color={inputText.trim() ? Colors.black : Colors.textMuted}
-            />
-          </TouchableOpacity>
+          {/* Send text button */}
+          {inputText.trim() && !isVoiceActive && (
+            <TouchableOpacity
+              style={styles.sendButton}
+              onPress={() => sendMessage(inputText)}
+              disabled={isLoading || isProcessingVoice}
+            >
+              <Ionicons name="send" size={18} color={Colors.black} />
+            </TouchableOpacity>
+          )}
         </View>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -543,13 +797,20 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   avatarContainer: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 42,
+    height: 42,
+    borderRadius: 21,
     backgroundColor: Colors.gold,
     justifyContent: 'center',
     alignItems: 'center',
     marginRight: 12,
+  },
+  avatarSpeaking: {
+    shadowColor: Colors.gold,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.8,
+    shadowRadius: 12,
+    elevation: 10,
   },
   avatarText: {
     color: Colors.black,
@@ -569,29 +830,56 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   statusDot: {
-    width: 6,
-    height: 6,
-    borderRadius: 3,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
     backgroundColor: Colors.success,
-    marginRight: 5,
+    marginRight: 6,
+  },
+  statusDotRecording: {
+    backgroundColor: Colors.error,
   },
   statusDotSpeaking: {
     backgroundColor: Colors.gold,
   },
+  statusDotProcessing: {
+    backgroundColor: Colors.warning,
+  },
   headerSubtitle: {
-    fontSize: 11,
+    fontSize: 12,
     color: Colors.gold,
+    fontWeight: '500',
   },
   stopButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
+    width: 36,
+    height: 36,
+    borderRadius: 18,
     backgroundColor: Colors.surfaceElevated,
     justifyContent: 'center',
     alignItems: 'center',
+    borderWidth: 1,
+    borderColor: Colors.error,
   },
-  menuButton: {
-    padding: 8,
+  recordingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 10,
+    backgroundColor: Colors.goldTransparent,
+    borderBottomWidth: 1,
+    borderBottomColor: Colors.goldTransparent40,
+  },
+  recordingDotAnimated: {
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.error,
+    marginRight: 10,
+  },
+  recordingBannerText: {
+    fontSize: 13,
+    color: Colors.gold,
+    fontWeight: '600',
   },
   messagesContainer: {
     flex: 1,
@@ -603,7 +891,7 @@ const styles = StyleSheet.create({
   messageBubble: {
     maxWidth: '85%',
     padding: 14,
-    borderRadius: 16,
+    borderRadius: 18,
     marginBottom: 8,
   },
   userBubble: {
@@ -616,21 +904,19 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.surfaceElevated,
     borderBottomLeftRadius: 4,
   },
-  voiceIndicator: {
-    position: 'absolute',
-    top: -8,
-    right: -8,
-    width: 20,
-    height: 20,
-    borderRadius: 10,
-    backgroundColor: Colors.surfaceElevated,
-    justifyContent: 'center',
-    alignItems: 'center',
+  voiceMessageBubble: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+  voiceIcon: {
+    marginRight: 6,
+    marginTop: 2,
   },
   messageText: {
     fontSize: 15,
     lineHeight: 22,
     color: Colors.textPrimary,
+    flex: 1,
   },
   userMessageText: {
     color: Colors.black,
@@ -647,12 +933,12 @@ const styles = StyleSheet.create({
     alignSelf: 'flex-start',
     backgroundColor: Colors.surfaceElevated,
     padding: 14,
-    borderRadius: 16,
-    gap: 8,
+    borderRadius: 18,
+    gap: 10,
   },
   loadingText: {
     fontSize: 14,
-    color: Colors.textMuted,
+    color: Colors.gold,
     fontStyle: 'italic',
   },
   quickPrompts: {
@@ -677,29 +963,11 @@ const styles = StyleSheet.create({
     color: Colors.gold,
     fontWeight: '500',
   },
-  recordingIndicator: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 8,
-    backgroundColor: Colors.goldTransparent,
-    gap: 8,
-  },
-  recordingDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: Colors.error,
-  },
-  recordingText: {
-    fontSize: 13,
-    color: Colors.gold,
-    fontWeight: '500',
-  },
   inputContainer: {
     flexDirection: 'row',
     alignItems: 'flex-end',
     padding: 12,
+    paddingBottom: Platform.OS === 'ios' ? 24 : 12,
     borderTopWidth: 1,
     borderTopColor: Colors.border,
     gap: 8,
@@ -715,7 +983,7 @@ const styles = StyleSheet.create({
   textInput: {
     flex: 1,
     minHeight: 44,
-    maxHeight: 120,
+    maxHeight: 100,
     backgroundColor: Colors.surfaceElevated,
     borderRadius: 22,
     paddingHorizontal: 16,
@@ -727,37 +995,51 @@ const styles = StyleSheet.create({
     position: 'relative',
     justifyContent: 'center',
     alignItems: 'center',
+    width: 56,
+    height: 56,
   },
   pulseRing: {
     position: 'absolute',
-    width: 52,
-    height: 52,
-    borderRadius: 26,
     backgroundColor: Colors.gold,
   },
+  pulseRingOuter: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+  },
+  pulseRingInner: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+  },
   voiceButton: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
+    width: 48,
+    height: 48,
+    borderRadius: 24,
     backgroundColor: Colors.surfaceElevated,
     justifyContent: 'center',
     alignItems: 'center',
     borderWidth: 2,
     borderColor: Colors.goldTransparent40,
   },
-  voiceButtonActive: {
+  voiceButtonRecording: {
     backgroundColor: Colors.gold,
+    borderColor: Colors.gold,
+    shadowColor: Colors.gold,
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 16,
+    elevation: 10,
+  },
+  voiceButtonProcessing: {
     borderColor: Colors.gold,
   },
   sendButton: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: Colors.border,
+    backgroundColor: Colors.gold,
     justifyContent: 'center',
     alignItems: 'center',
-  },
-  sendButtonActive: {
-    backgroundColor: Colors.gold,
   },
 });

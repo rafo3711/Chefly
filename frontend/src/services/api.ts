@@ -83,6 +83,21 @@ export const getScanHistory = async (userId: string) => {
   return response.data;
 };
 
+// Voice Chat API
+export const sendVoiceChat = async (
+  userId: string,
+  audioBase64: string,
+  sessionId?: string
+) => {
+  const response = await api.post('/chat/voice', {
+    user_id: userId,
+    audio_base64: audioBase64,
+    session_id: sessionId,
+    audio_format: 'wav',
+  }, { timeout: 90000 });
+  return response.data;
+};
+
 export const scanBottle = async (
   userId: string,
   imageBase64: string,
